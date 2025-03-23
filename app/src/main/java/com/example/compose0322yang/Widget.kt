@@ -3,6 +3,7 @@ package com.example.compose0322yang
 import android.content.Context
 import androidx.compose.material3.Text
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -12,8 +13,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.glance.Button
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
+import androidx.glance.ImageProvider
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
+import androidx.glance.appwidget.components.CircleIconButton
 import androidx.glance.appwidget.lazy.LazyColumn
 import androidx.glance.appwidget.lazy.items
 import androidx.glance.appwidget.provideContent
@@ -32,42 +35,21 @@ class Widget : GlanceAppWidget() {
                 horizontalAlignment = androidx.glance.layout.Alignment.CenterHorizontally,
                 verticalAlignment = androidx.glance.layout.Alignment.CenterVertically
             ) {
-                var player by remember { mutableStateOf<Player?>(null) }
                 var list by remember { mutableStateOf<List<Int>>(emptyList()) }
-                LaunchedEffect(Unit) {
-                    while (true) {
-                        val sessionToken =
-                            androidx.media3.session.SessionToken(
-                                context,
-                                android.content.ComponentName(
-                                    context,
-                                    com.example.compose0322yang.PlaybackService::class.java
-                                )
-                            )
-                        val controllerFuture =
-                            androidx.media3.session.MediaController.Builder(context, sessionToken)
-                                .buildAsync()
-                        controllerFuture.addListener(
-                            {
-                                player = controllerFuture.get()
-                                list = PlaybackService.fav
-                            },
-                            java.util.concurrent.Executors.newSingleThreadExecutor()
-                        )
-                        kotlinx.coroutines.delay(500L)
-                    }
-                }
-
-                Row() {
+                val playerState by PlaybackService.playerState.collectAsState()
+                Row {
                     Button(
                         text = "prev",
-                        onClick = { player?.seekToPreviousMediaItem() })
-                    Button(
-                        text = "play/pause",
-                        onClick = { if (player?.isPlaying == true) player?.pause() else player?.play() })
+                        onClick = { PlaybackService.seekToPrevious() })
+                    CircleIconButton(
+                        imageProvider = ImageProvider(if (playerState.isPlaying) R.drawable.baseline_pause_24 else R.drawable.baseline_play_arrow_24),
+                        contentDescription = "",
+                        onClick = {
+                            PlaybackService.togglePlayPause()
+                        })
                     Button(
                         text = "next",
-                        onClick = { player?.seekToNextMediaItem() })
+                        onClick = { PlaybackService.seekToNext() })
                 }
                 LazyColumn {
                     items(list) {

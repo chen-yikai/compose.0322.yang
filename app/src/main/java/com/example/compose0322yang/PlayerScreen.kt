@@ -6,7 +6,9 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.transition.Slide
+import android.util.Log
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,11 +25,17 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -40,11 +48,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
@@ -78,50 +88,84 @@ fun PlayerScreen(context: Context) {
     var data by remember { mutableStateOf<List<Music>>(emptyList()) }
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
 
-    val isPlaying by PlaybackService.isPlaying.collectAsState()
-    val currentIndex by PlaybackService.currentIndex.collectAsState()
-    var player by remember { mutableStateOf<Player?>(null) }
+    val playerState by PlaybackService.playerState.collectAsState()
 
     var favList by remember { mutableStateOf<List<Int>>(emptyList()) }
     var showList by remember { mutableStateOf(false) }
+    var showConfig by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        while (true) {
-            val sessionToken =
-                SessionToken(context, ComponentName(context, PlaybackService::class.java))
-            val controllerFuture =
-                MediaController.Builder(context, sessionToken).buildAsync()
-            controllerFuture.addListener(
-                {
-                    player = controllerFuture.get()
-                },
-                Executors.newSingleThreadExecutor()
-            )
-            delay(500L)
+        try {
+            withContext(Dispatchers.IO) {
+                val client = OkHttpClient()
+                val request =
+                    Request.Builder().url("https://skills-music-api-v2.eliaschen.dev/sounds")
+                        .build()
+                data = client.newCall(request).execute().use {
+                    Gson().fromJson(it.body?.string(), object : TypeToken<List<Music>>() {}.type)
+                }
+            }
+            val mediaItems: MutableList<MediaItem> = mutableListOf()
+            data.forEachIndexed { index, item ->
+                mediaItems.add(
+                    MediaItem.Builder().setUri("$host${item.audio}")
+                        .setMediaMetadata(
+                            MediaMetadata.Builder().setTitle(item.name)
+                                .setDescription(item.description)
+                                .setArtworkUri(Uri.parse("$host${item.cover}")).build()
+                        ).build()
+                )
+            }
+            PlaybackService.init(mediaItems)
+        } catch (e: Exception) {
+
         }
     }
 
-
-    LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) {
-            val client = OkHttpClient()
-            val request =
-                Request.Builder().url("https://skills-music-api-v2.eliaschen.dev/sounds").build()
-            data = client.newCall(request).execute().use {
-                Gson().fromJson(it.body?.string(), object : TypeToken<List<Music>>() {}.type)
-            }
-        }
-        val mediaItems: MutableList<MediaItem> = mutableListOf()
-        data.forEachIndexed { index, item ->
-            mediaItems.add(
-                MediaItem.Builder().setUri("$host${item.audio}")
-                    .setMediaMetadata(
-                        MediaMetadata.Builder().setTitle(item.name).setDescription(item.description)
-                            .setArtworkUri(Uri.parse("$host${item.cover}")).build()
-                    ).build()
+    if (showConfig) {
+        var selectedItem by remember { mutableStateOf(playerState.repeatMode) }
+        var itemList = listOf("Off", "Once", "All")
+        LaunchedEffect(selectedItem) {
+            PlaybackService.setRepeat(
+                when (selectedItem) {
+                    0 -> Player.REPEAT_MODE_OFF
+                    1 -> Player.REPEAT_MODE_ONE
+                    2 -> Player.REPEAT_MODE_ALL
+                    else -> Player.REPEAT_MODE_OFF
+                }
             )
         }
-        PlaybackService.init(mediaItems)
+        Dialog(onDismissRequest = { showConfig = false }) {
+            Column(
+                Modifier
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Color.White)
+                    .padding(20.dp)
+            ) {
+                Slider(value = playerState.volume, onValueChange = {
+                    PlaybackService.adjustVolume(it)
+                }, valueRange = 0f..1f, modifier = Modifier.fillMaxWidth())
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    itemList.forEachIndexed { index, item ->
+                        SegmentedButton(
+                            selected = index == selectedItem,
+                            onClick = {
+                                selectedItem = index
+                            },
+                            shape = SegmentedButtonDefaults.itemShape(
+                                count = itemList.size,
+                                index = index,
+                            )
+                        ) {
+                            Text(item)
+                        }
+                    }
+                }
+                FilledTonalButton(onClick = {
+                    PlaybackService.setSpeed(2.0f)
+                }) { Text("Speed up") }
+            }
+        }
     }
 
     if (showList) {
@@ -152,7 +196,10 @@ fun PlayerScreen(context: Context) {
                     contentDescription = ""
                 )
             }
-            IconButton(onClick = { if (!favList.contains(currentIndex)) favList += currentIndex }) {
+            IconButton(onClick = {
+                showConfig = true
+            }) { Icon(Icons.Default.Settings, contentDescription = "") }
+            IconButton(onClick = { if (!favList.contains(playerState.currentIndex)) favList += playerState.currentIndex }) {
                 Icon(
                     painter = painterResource(R.drawable.baseline_playlist_add_24),
                     contentDescription = ""
@@ -160,10 +207,11 @@ fun PlayerScreen(context: Context) {
             }
         }
         if (data.isNotEmpty()) {
-            LaunchedEffect(player, Unit) {
+            LaunchedEffect(playerState.currentIndex) {
+                bitmap = null
                 withContext(Dispatchers.IO) {
                     bitmap =
-                        URL("$host${data[currentIndex].cover}").openStream()
+                        URL("$host${data[playerState.currentIndex].cover}").openStream()
                             .use {
                                 BitmapFactory.decodeStream(it) ?: null
                             }
@@ -173,36 +221,43 @@ fun PlayerScreen(context: Context) {
                 Modifier.align(Alignment.Center),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                bitmap?.let {
-                    Image(
-                        bitmap = it.asImageBitmap(),
-                        contentDescription = "",
-                        Modifier
-                            .padding(horizontal = 40.dp)
-                            .clip(
-                                RoundedCornerShape(20.dp)
-                            )
-                    )
-
+                if (bitmap != null) {
+                    bitmap?.let {
+                        Image(
+                            bitmap = it.asImageBitmap(),
+                            contentDescription = "",
+                            Modifier
+                                .size(350.dp)
+                                .clip(
+                                    RoundedCornerShape(20.dp)
+                                )
+                        )
+                    }
+                } else {
+                    Box(Modifier.size(350.dp)) {
+                        CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                    }
                 }
+
                 Spacer(Modifier.height(20.dp))
                 Text(
-                    data[currentIndex].name,
+                    data[playerState.currentIndex].name,
                     fontSize = 30.sp,
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(Modifier.height(20.dp))
-                if (player?.duration != null)
-                    player?.currentPosition?.toFloat()?.let {
-                        Slider(
-                            value = it,
-                            onValueChange = {
-                                player?.seekTo(it.toLong())
-                            },
-                            valueRange = 0f..40000f,
-                            modifier = Modifier.padding(horizontal = 20.dp)
-                        )
-                    }
+                if (playerState.duration.toFloat() > 0f)
+                    Slider(
+                        value = playerState.currentPosition.toFloat(),
+                        onValueChange = {
+                            PlaybackService.seekTo(it.toLong())
+                        },
+                        valueRange = 0f..playerState.duration.toFloat(),
+                        modifier = Modifier.padding(horizontal = 20.dp)
+                    )
+                Row {
+                    Text(timeFormat(playerState.currentPosition))
+                }
                 Spacer(Modifier.height(30.dp))
                 Row(
                     Modifier
@@ -211,7 +266,7 @@ fun PlayerScreen(context: Context) {
                     horizontalArrangement = Arrangement.SpaceAround
                 ) {
                     IconButton(onClick = {
-                        player?.seekToPreviousMediaItem()
+                        PlaybackService.seekToPrevious()
                     }, modifier = Modifier.size(60.dp)) {
                         Icon(
                             modifier = Modifier.fillMaxSize(),
@@ -220,20 +275,16 @@ fun PlayerScreen(context: Context) {
                         )
                     }
                     IconButton(onClick = {
-                        if (isPlaying) {
-                            player?.pause()
-                        } else {
-                            player?.play()
-                        }
+                        PlaybackService.togglePlayPause()
                     }, modifier = Modifier.size(60.dp)) {
                         Icon(
                             modifier = Modifier.fillMaxSize(),
-                            painter = painterResource(if (isPlaying) R.drawable.baseline_pause_24 else R.drawable.baseline_play_arrow_24),
+                            painter = painterResource(if (playerState.isPlaying) R.drawable.baseline_pause_24 else R.drawable.baseline_play_arrow_24),
                             contentDescription = ""
                         )
                     }
                     IconButton(onClick = {
-                        player?.seekToNextMediaItem()
+                        PlaybackService.seekToNext()
                     }, modifier = Modifier.size(60.dp)) {
                         Icon(
                             modifier = Modifier.fillMaxSize(),
@@ -247,3 +298,9 @@ fun PlayerScreen(context: Context) {
     }
 }
 
+fun timeFormat(input: Long): String {
+    val second = input / 1000
+    val mm = second / 60
+    val ss = second % 60
+    return "${mm.toString().padStart(2, '0')}:${ss.toString().padStart(2, '0')}"
+}
