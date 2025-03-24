@@ -7,6 +7,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.transition.Slide
 import android.util.Log
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +23,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
@@ -44,14 +48,17 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -65,6 +72,7 @@ import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -82,9 +90,10 @@ data class Music(
     val cover: String
 )
 
-@OptIn(ExperimentalMaterial3Api::class)
+@Preview
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun PlayerScreen(context: Context) {
+fun PlayerScreen(context: Context = LocalContext.current) {
     var data by remember { mutableStateOf<List<Music>>(emptyList()) }
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
 
@@ -94,6 +103,10 @@ fun PlayerScreen(context: Context) {
     var showList by remember { mutableStateOf(false) }
     var showConfig by remember { mutableStateOf(false) }
 
+    var scope = rememberCoroutineScope()
+
+    var pagerState: PagerState = rememberPagerState(initialPage = 0) { data.size }
+
     LaunchedEffect(Unit) {
         try {
             withContext(Dispatchers.IO) {
@@ -102,18 +115,19 @@ fun PlayerScreen(context: Context) {
                     Request.Builder().url("https://skills-music-api-v2.eliaschen.dev/sounds")
                         .build()
                 data = client.newCall(request).execute().use {
-                    Gson().fromJson(it.body?.string(), object : TypeToken<List<Music>>() {}.type)
+                    Gson().fromJson(
+                        it.body?.string(), object : TypeToken<List<Music>>() {}.type
+                    )
                 }
             }
             val mediaItems: MutableList<MediaItem> = mutableListOf()
             data.forEachIndexed { index, item ->
                 mediaItems.add(
-                    MediaItem.Builder().setUri("$host${item.audio}")
-                        .setMediaMetadata(
-                            MediaMetadata.Builder().setTitle(item.name)
-                                .setDescription(item.description)
-                                .setArtworkUri(Uri.parse("$host${item.cover}")).build()
-                        ).build()
+                    MediaItem.Builder().setUri("$host${item.audio}").setMediaMetadata(
+                        MediaMetadata.Builder().setTitle(item.name)
+                            .setDescription(item.description)
+                            .setArtworkUri(Uri.parse("$host${item.cover}")).build()
+                    ).build()
                 )
             }
             PlaybackService.init(mediaItems)
@@ -148,11 +162,9 @@ fun PlayerScreen(context: Context) {
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                     itemList.forEachIndexed { index, item ->
                         SegmentedButton(
-                            selected = index == selectedItem,
-                            onClick = {
+                            selected = index == selectedItem, onClick = {
                                 selectedItem = index
-                            },
-                            shape = SegmentedButtonDefaults.itemShape(
+                            }, shape = SegmentedButtonDefaults.itemShape(
                                 count = itemList.size,
                                 index = index,
                             )
@@ -184,6 +196,10 @@ fun PlayerScreen(context: Context) {
         }
     }
 
+    LaunchedEffect(pagerState.currentPage) {
+        PlaybackService.seekToMediaIndex(pagerState.currentPage)
+    }
+
     Box(
         Modifier
             .fillMaxSize()
@@ -210,32 +226,35 @@ fun PlayerScreen(context: Context) {
             LaunchedEffect(playerState.currentIndex) {
                 bitmap = null
                 withContext(Dispatchers.IO) {
-                    bitmap =
-                        URL("$host${data[playerState.currentIndex].cover}").openStream()
-                            .use {
-                                BitmapFactory.decodeStream(it) ?: null
-                            }
+                    bitmap = URL("$host${data[playerState.currentIndex].cover}").openStream().use {
+                        BitmapFactory.decodeStream(it) ?: null
+                    }
                 }
             }
             Column(
-                Modifier.align(Alignment.Center),
-                horizontalAlignment = Alignment.CenterHorizontally
+                Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                if (bitmap != null) {
-                    bitmap?.let {
-                        Image(
-                            bitmap = it.asImageBitmap(),
-                            contentDescription = "",
-                            Modifier
-                                .size(350.dp)
-                                .clip(
-                                    RoundedCornerShape(20.dp)
+                HorizontalPager(state = pagerState) { currentPage ->
+                    Column(
+                        Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        if (bitmap != null) {
+                            bitmap?.let {
+                                Image(
+                                    bitmap = it.asImageBitmap(),
+                                    contentDescription = "",
+                                    Modifier
+                                        .size(350.dp)
+                                        .clip(
+                                            RoundedCornerShape(20.dp)
+                                        )
                                 )
-                        )
-                    }
-                } else {
-                    Box(Modifier.size(350.dp)) {
-                        CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                            }
+                        } else {
+                            Box(Modifier.size(350.dp)) {
+                                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                            }
+                        }
                     }
                 }
 
@@ -246,17 +265,22 @@ fun PlayerScreen(context: Context) {
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(Modifier.height(20.dp))
-                if (playerState.duration.toFloat() > 0f)
-                    Slider(
-                        value = playerState.currentPosition.toFloat(),
-                        onValueChange = {
-                            PlaybackService.seekTo(it.toLong())
-                        },
-                        valueRange = 0f..playerState.duration.toFloat(),
-                        modifier = Modifier.padding(horizontal = 20.dp)
-                    )
-                Row {
+                if (playerState.duration.toFloat() > 0f) Slider(
+                    value = playerState.currentPosition.toFloat(),
+                    onValueChange = {
+                        PlaybackService.seekTo(it.toLong())
+                    },
+                    valueRange = 0f..playerState.duration.toFloat(),
+                    modifier = Modifier.padding(horizontal = 20.dp)
+                )
+                Row(
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp)
+                ) {
                     Text(timeFormat(playerState.currentPosition))
+                    Text(timeFormat(playerState.duration))
                 }
                 Spacer(Modifier.height(30.dp))
                 Row(
@@ -266,7 +290,9 @@ fun PlayerScreen(context: Context) {
                     horizontalArrangement = Arrangement.SpaceAround
                 ) {
                     IconButton(onClick = {
-                        PlaybackService.seekToPrevious()
+                        scope.launch {
+                            pagerState.animateScrollToPage(pagerState.currentPage - 1)
+                        }
                     }, modifier = Modifier.size(60.dp)) {
                         Icon(
                             modifier = Modifier.fillMaxSize(),
@@ -284,7 +310,9 @@ fun PlayerScreen(context: Context) {
                         )
                     }
                     IconButton(onClick = {
-                        PlaybackService.seekToNext()
+                        scope.launch {
+                            pagerState.animateScrollToPage(pagerState.currentPage + 1)
+                        }
                     }, modifier = Modifier.size(60.dp)) {
                         Icon(
                             modifier = Modifier.fillMaxSize(),
@@ -294,6 +322,8 @@ fun PlayerScreen(context: Context) {
                     }
                 }
             }
+        } else {
+            CircularProgressIndicator(Modifier.align(Alignment.Center))
         }
     }
 }

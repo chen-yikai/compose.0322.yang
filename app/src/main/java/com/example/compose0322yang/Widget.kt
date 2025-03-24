@@ -1,14 +1,11 @@
 package com.example.compose0322yang
 
 import android.content.Context
-import androidx.compose.material3.Text
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.glance.Button
 import androidx.glance.GlanceId
@@ -21,11 +18,10 @@ import androidx.glance.appwidget.lazy.LazyColumn
 import androidx.glance.appwidget.lazy.items
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
-import androidx.glance.layout.Box
 import androidx.glance.layout.Column
 import androidx.glance.layout.Row
 import androidx.glance.layout.fillMaxSize
-import androidx.media3.common.Player
+import androidx.glance.text.Text
 
 class Widget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
@@ -37,6 +33,7 @@ class Widget : GlanceAppWidget() {
             ) {
                 var list by remember { mutableStateOf<List<Int>>(emptyList()) }
                 val playerState by PlaybackService.playerState.collectAsState()
+                Text(playerState.metadata.title.toString())
                 Row {
                     Button(
                         text = "prev",

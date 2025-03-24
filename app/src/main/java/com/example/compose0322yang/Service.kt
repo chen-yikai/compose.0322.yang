@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Intent
+import android.provider.MediaStore.Audio.Media
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -16,6 +17,7 @@ import androidx.media3.session.MediaSessionService
 import androidx.core.app.NotificationCompat
 import androidx.glance.appwidget.updateAll
 import androidx.media3.common.FlagSet
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
@@ -39,7 +41,8 @@ data class PlayerState(
     var isPlaying: Boolean = false,
     var volume: Float = 1.0f,
     var currentIndex: Int = 0,
-    var repeatMode: Int = Player.REPEAT_MODE_OFF
+    var repeatMode: Int = Player.REPEAT_MODE_OFF,
+    var metadata: MediaMetadata = MediaMetadata.Builder().build(),
 )
 
 class PlaybackService : MediaSessionService() {
@@ -52,8 +55,6 @@ class PlaybackService : MediaSessionService() {
     companion object {
         private val _playerState = MutableStateFlow(PlayerState())
         val playerState: StateFlow<PlayerState> = _playerState
-
-        var fav = mutableListOf<Int>()
 
         var playerInstance: ExoPlayer? = null
 
@@ -99,6 +100,12 @@ class PlaybackService : MediaSessionService() {
                 it.playbackParameters = PlaybackParameters(target.coerceIn(0.1f..2.0f))
             }
         }
+
+        fun seekToMediaIndex(index: Int) {
+            playerInstance?.let {
+                it.seekTo(index, 0)
+            }
+        }
     }
 
     override fun onCreate() {
@@ -112,7 +119,8 @@ class PlaybackService : MediaSessionService() {
                     isPlaying = player.isPlaying,
                     duration = player.duration,
                     volume = player.volume,
-                    repeatMode = player.repeatMode
+                    repeatMode = player.repeatMode,
+                    metadata = player.mediaMetadata
                 )
                 serviceScope.launch {
                     Widget().updateAll(applicationContext)
@@ -122,17 +130,7 @@ class PlaybackService : MediaSessionService() {
             }
         })
 
-        mediaSession = MediaSession.Builder(this, player)
-            .setCallback(object : MediaSession.Callback {
-                override fun onAddMediaItems(
-                    mediaSession: MediaSession,
-                    controller: MediaSession.ControllerInfo,
-                    mediaItems: List<MediaItem>
-                ): ListenableFuture<List<MediaItem>> {
-                    return Futures.immediateFuture(mediaItems)
-                }
-            })
-            .build()
+        mediaSession = MediaSession.Builder(this, player).build()
         startControllerConnection()
     }
 
@@ -143,16 +141,8 @@ class PlaybackService : MediaSessionService() {
                 this@PlaybackService,
                 ComponentName(this@PlaybackService, PlaybackService::class.java)
             )
-            val controllerFuture =
-                MediaController.Builder(this@PlaybackService, sessionToken).buildAsync()
-            controllerFuture.addListener(
-                {
-                    val controller = controllerFuture.get()
-                },
-                Executors.newSingleThreadExecutor()
-            )
+            MediaController.Builder(this@PlaybackService, sessionToken).buildAsync()
         }
-
     }
 
     private fun updatePosition() {
@@ -190,16 +180,10 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun createNotification(): Notification {
-        val intent = packageManager.getLaunchIntentForPackage(packageName)
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
         return NotificationCompat.Builder(this, "media_channel")
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle("title")
             .setContentText("text")
-            .setContentIntent(pendingIntent)
             .setOngoing(true)
             .build()
     }
